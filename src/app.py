@@ -1,6 +1,8 @@
 #
 # Web based GUI for BBC chess engine
 #
+import os
+import sys
 
 # packages
 from flask import Flask
@@ -83,12 +85,13 @@ def make_move():
     pgn = request.form.get('pgn')
     
     # probe opening book
+    """
     if probe_book(pgn):
         return {
             'score': 'book move',
             'best_move': probe_book(pgn)
         }
-
+    """
     # read game moves from PGN
     game = chess.pgn.read_game(io.StringIO(pgn))    
     
@@ -101,43 +104,63 @@ def make_move():
         board.push(move)
     
     # create chess engine instance
-    engine = chess.engine.SimpleEngine.popen_uci('./engine/bbc_1.4')
-    
+    engine_dir = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "mini-stockfish")
+)
+
+    engine = chess.engine.SimpleEngine.popen_uci(
+        [sys.executable, os.path.join(engine_dir, "uci_engine.py")],
+        cwd=engine_dir,
+    ) 
     # extract fixed depth value
-    fixed_depth = request.form.get('fixed_depth')
-
-    # extract move time value
-    move_time = request.form.get('move_time')
     
-    # if move time is available
-    if move_time != '0':
-        if move_time == 'instant':
-            try:
-                # search for best move instantly
-                info = engine.analyse(board, chess.engine.Limit(time=0.1))
-            except:
-                info = {}
+    fixed_depth = request.form.get('fixed_depth', '0')
+    move_time = request.form.get('move_time', '0')
+
+    try:
+        if fixed_depth != '0':
+            info = engine.analyse(
+                board,
+                chess.engine.Limit(depth=int(fixed_depth))
+            )
+        elif move_time == 'instant':
+            info = engine.analyse(
+                board,
+                chess.engine.Limit(time=0.1)
+            )
+        elif move_time != '0':
+            info = engine.analyse(
+                board,
+                chess.engine.Limit(time=int(move_time))
+            )
         else:
-            try:
-                # search for best move with fixed move time
-                info = engine.analyse(board, chess.engine.Limit(time=int(move_time)))
-            except:
-                info = {}
+            return {'error': 'No search limit selected'}, 400
 
-    # if fixed depth is available
-    if fixed_depth != '0':
-        try:
-            # search for best move instantly
-            info = engine.analyse(board, chess.engine.Limit(depth=int(fixed_depth)))
-        except:
-            info = {}
-    
-    # terminate engine process
-    engine.quit()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {'error': f'Engine analysis failed: {e}'}, 500
+
+    finally:
+        engine.quit()
+
+    print("DEBUG INFO:", info, flush=True)
+
     
     try:
         # extract best move from PV
-        best_move = info['pv'][0]
+        pv = info.get('pv', [])
+
+        if not pv:
+            print("ERROR: No PV returned", flush=True)
+            print("INFO:", info, flush=True)
+            return {
+                'error': 'Engine returned no principal variation',
+                'score': str(info.get('score', 'Unknown')),
+                'fen': board.fen()
+            }, 500
+
+        best_move = pv[0]
 
         # update internal python chess board state
         board.push(best_move)
@@ -168,11 +191,11 @@ def make_move():
             'time': info['time']
         }
     
-    except:
-        return {
-            'fen': board.fen(),
-            'score': '#+1'
-        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {'errror': str(e)}, 500
+        
 
 @app.route('/analytics')
 def analytics():
