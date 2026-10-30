@@ -69,7 +69,7 @@ def main():
                 send("bestmove 0000")
                 continue
 
-            depth = 4
+            depth = 3
             if "depth" in parts:
                 try:
                     depth = int(parts[parts.index("depth") + 1])
